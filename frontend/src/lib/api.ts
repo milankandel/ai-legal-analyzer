@@ -2,15 +2,22 @@ import { API_BASE_URL } from "./constants";
 
 async function fetchAPI<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
-  const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
-    ...options,
-  });
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(error.detail || `API error: ${res.status}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(url, {
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      signal: controller.signal,
+      ...options,
+    });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(error.detail || `API error: ${res.status}`);
+    }
+    return res.json();
+  } finally {
+    clearTimeout(timeout);
   }
-  return res.json();
 }
 
 export const api = {
@@ -21,10 +28,20 @@ export const api = {
   uploadContract: (file: File) => {
     const form = new FormData();
     form.append("file", file);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     return fetch(`${API_BASE_URL}/api/contracts/upload`, {
       method: "POST",
       body: form,
-    }).then((r) => r.json());
+      signal: controller.signal,
+    }).then((r) => {
+      clearTimeout(timeout);
+      if (!r.ok) throw new Error(`Upload error: ${r.status}`);
+      return r.json();
+    }).catch((err) => {
+      clearTimeout(timeout);
+      throw err;
+    });
   },
 
   analyzeContract: (contractId: string, contractType: string = "general") =>
